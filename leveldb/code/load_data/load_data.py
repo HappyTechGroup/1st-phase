@@ -11,6 +11,7 @@ def main():
         print index
         key = ''.join(random.sample(charSet, 20))
         value = ''.join(random.sample(charSet, 30))
+        print key, value
         resp = requests.get('http://127.0.0.1:8799/leveldb?action=set&key=' + key + '&value=' + value)
         print resp.status_code
         if resp.status_code == 200:
