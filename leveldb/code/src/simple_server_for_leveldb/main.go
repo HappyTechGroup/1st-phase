@@ -31,29 +31,25 @@ func RequestHandler(w http.ResponseWriter, req *http.Request) {
 
     w.Header().Set("Content-Type", "application/json")
 
-    err := req.ParseForm()
+    log.Println("Request Method: ", req.Method)
+
+    err := req.ParseMultipartForm(1024 * 1024)
     if err != nil {
         log.Println("Failed to parse form", err)
         w.Write(genResponseStr("500", "请求无效！"))
         return
     }
 
-    action := req.FormValue("action")
-    if action == "" {
-        log.Println("action参数无效或不存在")
-        w.Write(genResponseStr("500", "action参数无效或不存在"))
-        return
-    }
     key := req.FormValue("key")
+    log.Println("Key: ", key)
     if key == "" {
         log.Println("key参数为空或不存在")
         w.Write(genResponseStr("500", "提供key请求参数且不能为空"))
         return
     }
 
-    if action == "get" {
+    if req.Method == "GET" {
         targetValue, err := dbConn.Get([]byte(key), nil)
-        // TODO 响应数据
         if err != nil {
             w.Write(genResponseStr("500", err.Error()))
             return
@@ -62,9 +58,8 @@ func RequestHandler(w http.ResponseWriter, req *http.Request) {
         return
     }
 
-    if action == "del" {
+    if req.Method == "DELETE" {
         err = dbConn.Delete([]byte(key), nil)
-        // TODO 响应
         if err != nil {
             w.Write(genResponseStr("500", err.Error()))
             return
@@ -73,10 +68,10 @@ func RequestHandler(w http.ResponseWriter, req *http.Request) {
         return
     }
 
-    if action == "set" {
+    if req.Method == "POST" {
         value := req.FormValue("value")
+        log.Println("Value: ", value)
         err = dbConn.Set([]byte(key), []byte(value), nil)
-        // TODO 响应
         if err != nil {
             w.Write(genResponseStr("500", err.Error()))
             return
@@ -96,7 +91,7 @@ func main() {
        return
     }
 
-    http.HandleFunc("/leveldb", RequestHandler)
+    http.HandleFunc("/leveldb/", RequestHandler)
 	err = http.ListenAndServe(":8799", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
