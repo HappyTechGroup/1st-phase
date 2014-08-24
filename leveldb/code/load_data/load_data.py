@@ -6,10 +6,10 @@ import requests
 
 
 def main():
-    charSet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
+    char_set = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
     for _ in xrange(1000000):
-        key = ''.join(random.sample(charSet, 20))
-        value = ''.join(random.sample(charSet, 30))
+        key = ''.join(random.sample(char_set, 20))
+        value = ''.join(random.sample(char_set, 30))
         payload = {'key': key, 'value': value}
         
         resp = requests.post('http://127.0.0.1:8799/leveldb/', data=payload)
