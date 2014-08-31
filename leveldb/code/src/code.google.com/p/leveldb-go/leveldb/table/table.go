@@ -28,37 +28,37 @@ ordering should be used for reading and writing a table.
 
 To return the value for a key:
 
-	r := table.NewReader(file, options)
-	defer r.Close()
-	return r.Get(key)
+    r := table.NewReader(file, options)
+    defer r.Close()
+    return r.Get(key)
 
 To count the number of entries in a table:
 
-	i, n := r.Find(nil, ropts), 0
-	for i.Next() {
-		n++
-	}
-	if err := i.Close(); err != nil {
-		return 0, err
-	}
-	return n, nil
+    i, n := r.Find(nil, ropts), 0
+    for i.Next() {
+        n++
+    }
+    if err := i.Close(); err != nil {
+        return 0, err
+    }
+    return n, nil
 
 To write a table with three entries:
 
-	w := table.NewWriter(file, options)
-	if err := w.Set([]byte("apple"), []byte("red"), wopts); err != nil {
-		w.Close()
-		return err
-	}
-	if err := w.Set([]byte("banana"), []byte("yellow"), wopts); err != nil {
-		w.Close()
-		return err
-	}
-	if err := w.Set([]byte("cherry"), []byte("red"), wopts); err != nil {
-		w.Close()
-		return err
-	}
-	return w.Close()
+    w := table.NewWriter(file, options)
+    if err := w.Set([]byte("apple"), []byte("red"), wopts); err != nil {
+        w.Close()
+        return err
+    }
+    if err := w.Set([]byte("banana"), []byte("yellow"), wopts); err != nil {
+        w.Close()
+        return err
+    }
+    if err := w.Set([]byte("cherry"), []byte("red"), wopts); err != nil {
+        w.Close()
+        return err
+    }
+    return w.Close()
 */
 package table
 
@@ -122,16 +122,16 @@ values. The maximum size of an encoded block handle is therefore 20 bytes.
 */
 
 const (
-	blockTrailerLen = 5
-	footerLen       = 48
+    blockTrailerLen = 5
+    footerLen       = 48
 
-	magic = "\x57\xfb\x80\x8b\x24\x75\x47\xdb"
+    magic = "\x57\xfb\x80\x8b\x24\x75\x47\xdb"
 
-	// The block type gives the per-block compression format.
-	// These constants are part of the file format and should not be changed.
-	// They are different from the db.Compression constants because the latter
-	// are designed so that the zero value of the db.Compression type means to
-	// use the default compression (which is snappy).
-	noCompressionBlockType     = 0
-	snappyCompressionBlockType = 1
+    // The block type gives the per-block compression format.
+    // These constants are part of the file format and should not be changed.
+    // They are different from the db.Compression constants because the latter
+    // are designed so that the zero value of the db.Compression type means to
+    // use the default compression (which is snappy).
+    noCompressionBlockType     = 0
+    snappyCompressionBlockType = 1
 )

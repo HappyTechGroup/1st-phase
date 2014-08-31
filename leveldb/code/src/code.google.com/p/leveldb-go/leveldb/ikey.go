@@ -5,9 +5,9 @@
 package leveldb
 
 import (
-	"bytes"
+    "bytes"
 
-	"code.google.com/p/leveldb-go/leveldb/db"
+    "code.google.com/p/leveldb-go/leveldb/db"
 )
 
 // internalKey is a key used for the in-memory and on-disk partial DBs that
@@ -22,19 +22,19 @@ type internalKey []byte
 type internalKeyKind uint8
 
 const (
-	// These constants are part of the file format, and should not be changed.
-	internalKeyKindDelete internalKeyKind = 0
-	internalKeyKindSet    internalKeyKind = 1
+    // These constants are part of the file format, and should not be changed.
+    internalKeyKindDelete internalKeyKind = 0
+    internalKeyKindSet    internalKeyKind = 1
 
-	// This maximum value isn't part of the file format. It's unlikely,
-	// but future extensions may increase this value.
-	//
-	// When constructing an internal key to pass to DB.Find, internalKeyComparer
-	// sorts decreasing by kind (after sorting increasing by user key and
-	// decreasing by sequence number). Thus, use internalKeyKindMax, which sorts
-	// 'less than or equal to' any other valid internalKeyKind, when searching
-	// for any kind of internal key formed by a certain user key and seqNum.
-	internalKeyKindMax internalKeyKind = 1
+    // This maximum value isn't part of the file format. It's unlikely,
+    // but future extensions may increase this value.
+    //
+    // When constructing an internal key to pass to DB.Find, internalKeyComparer
+    // sorts decreasing by kind (after sorting increasing by user key and
+    // decreasing by sequence number). Thus, use internalKeyKindMax, which sorts
+    // 'less than or equal to' any other valid internalKeyKind, when searching
+    // for any kind of internal key formed by a certain user key and seqNum.
+    internalKeyKindMax internalKeyKind = 1
 )
 
 // internalKeySeqNumMax is the largest valid sequence number.
@@ -45,64 +45,72 @@ const internalKeySeqNumMax = uint64(1<<56 - 1)
 // enough. Otherwise, it may be a slice of a newly allocated buffer. In any
 // case, all of dst[:cap(dst)] may be overwritten.
 func makeInternalKey(dst internalKey, ukey []byte, kind internalKeyKind, seqNum uint64) internalKey {
-	if cap(dst) < len(ukey)+8 {
-		n := 256
-		for n < len(ukey)+8 {
-			n *= 2
-		}
-		dst = make(internalKey, n)
-	}
-	ikey := dst[:len(ukey)+8]
-	i := copy(ikey, ukey)
-	ikey[i+0] = uint8(kind)
-	ikey[i+1] = uint8(seqNum)
-	ikey[i+2] = uint8(seqNum >> 8)
-	ikey[i+3] = uint8(seqNum >> 16)
-	ikey[i+4] = uint8(seqNum >> 24)
-	ikey[i+5] = uint8(seqNum >> 32)
-	ikey[i+6] = uint8(seqNum >> 40)
-	ikey[i+7] = uint8(seqNum >> 48)
-	return ikey
+    if cap(dst) < len(ukey)+8 {
+        // 最小长度256个byte
+        n := 256
+        // 如果用户提供的key的长度 + 8大于256
+        // 则分配的空间成倍增长
+        for n < len(ukey)+8 {
+            n *= 2
+        }
+        // type internalKey []byte
+        dst = make(internalKey, n)
+    }
+    // 那为什么又从其取出ukey+8长度的slice？
+	// 直接 ikey := make(internalKey, len(ukey) + 8) 不就可以了么？
+    ikey := dst[:len(ukey)+8]
+    // func copy(dst, src []Type) int
+    i := copy(ikey, ukey)
+    ikey[i+0] = uint8(kind)
+    // 其实就是把seqNum存在后边
+    ikey[i+1] = uint8(seqNum)
+    ikey[i+2] = uint8(seqNum >> 8)
+    ikey[i+3] = uint8(seqNum >> 16)
+    ikey[i+4] = uint8(seqNum >> 24)
+    ikey[i+5] = uint8(seqNum >> 32)
+    ikey[i+6] = uint8(seqNum >> 40)
+    ikey[i+7] = uint8(seqNum >> 48)
+    return ikey
 }
 
 // valid returns whether k is a valid internal key.
 func (k internalKey) valid() bool {
-	i := len(k) - 8
-	return i >= 0 && internalKeyKind(k[i]) <= internalKeyKindMax
+    i := len(k) - 8
+    return i >= 0 && internalKeyKind(k[i]) <= internalKeyKindMax
 }
 
 // ukey returns the user key portion of an internal key.
 // ukey may panic if k is not valid.
 func (k internalKey) ukey() []byte {
-	return []byte(k[:len(k)-8])
+    return []byte(k[:len(k)-8])
 }
 
 // kind returns the kind of an internal key.
 // kind may panic if k is not valid.
 func (k internalKey) kind() internalKeyKind {
-	return internalKeyKind(k[len(k)-8])
+    return internalKeyKind(k[len(k)-8])
 }
 
 // seqNum returns the sequence number of an internal key.
 // seqNum may panic if k is not valid.
 func (k internalKey) seqNum() uint64 {
-	i := len(k) - 7
-	n := uint64(k[i+0])
-	n |= uint64(k[i+1]) << 8
-	n |= uint64(k[i+2]) << 16
-	n |= uint64(k[i+3]) << 24
-	n |= uint64(k[i+4]) << 32
-	n |= uint64(k[i+5]) << 40
-	n |= uint64(k[i+6]) << 48
-	return n
+    i := len(k) - 7
+    n := uint64(k[i+0])
+    n |= uint64(k[i+1]) << 8
+    n |= uint64(k[i+2]) << 16
+    n |= uint64(k[i+3]) << 24
+    n |= uint64(k[i+4]) << 32
+    n |= uint64(k[i+5]) << 40
+    n |= uint64(k[i+6]) << 48
+    return n
 }
 
 // clone returns an internalKey that has the same contents but is backed by a
 // different array.
 func (k internalKey) clone() internalKey {
-	x := make(internalKey, len(k))
-	copy(x, k)
-	return x
+    x := make(internalKey, len(k))
+    copy(x, k)
+    return x
 }
 
 // internalKeyComparer is a db.Comparer that wraps another db.Comparer.
@@ -121,44 +129,44 @@ func (k internalKey) clone() internalKey {
 // deletes for ukey0 from the 'future' relative to the particular snapshot
 // seqNum0 of the DB).
 type internalKeyComparer struct {
-	userCmp db.Comparer
+    userCmp db.Comparer
 }
 
 var _ db.Comparer = internalKeyComparer{}
 
 func (c internalKeyComparer) Compare(a, b []byte) int {
-	ak, bk := internalKey(a), internalKey(b)
-	if !ak.valid() {
-		if bk.valid() {
-			return -1
-		}
-		return bytes.Compare(a, b)
-	}
-	if !bk.valid() {
-		return 1
-	}
-	if x := c.userCmp.Compare(ak.ukey(), bk.ukey()); x != 0 {
-		return x
-	}
-	if an, bn := ak.seqNum(), bk.seqNum(); an < bn {
-		return +1
-	} else if an > bn {
-		return -1
-	}
-	if ai, bi := ak.kind(), bk.kind(); ai < bi {
-		return +1
-	} else if ai > bi {
-		return -1
-	}
-	return 0
+    ak, bk := internalKey(a), internalKey(b)
+    if !ak.valid() {
+        if bk.valid() {
+            return -1
+        }
+        return bytes.Compare(a, b)
+    }
+    if !bk.valid() {
+        return 1
+    }
+    if x := c.userCmp.Compare(ak.ukey(), bk.ukey()); x != 0 {
+        return x
+    }
+    if an, bn := ak.seqNum(), bk.seqNum(); an < bn {
+        return +1
+    } else if an > bn {
+        return -1
+    }
+    if ai, bi := ak.kind(), bk.kind(); ai < bi {
+        return +1
+    } else if ai > bi {
+        return -1
+    }
+    return 0
 }
 
 func (c internalKeyComparer) Name() string {
-	// This is the same name given by the C++ leveldb's InternalKeyComparator class.
-	return "leveldb.InternalKeyComparator"
+    // This is the same name given by the C++ leveldb's InternalKeyComparator class.
+    return "leveldb.InternalKeyComparator"
 }
 
 func (c internalKeyComparer) AppendSeparator(dst, a, b []byte) []byte {
-	// TODO: this could be more sophisticated.
-	return append(dst, a...)
+    // TODO: this could be more sophisticated.
+    return append(dst, a...)
 }

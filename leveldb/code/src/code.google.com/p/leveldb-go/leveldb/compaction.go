@@ -26,6 +26,7 @@ const (
 	expandedCompactionByteSizeLimit = 25 * targetFileSize
 )
 
+// compaction: 压紧、压实、紧束的状态
 // compaction is a table compaction from one level to the next, starting from a
 // given version.
 type compaction struct {
@@ -40,6 +41,7 @@ type compaction struct {
 }
 
 // pickCompaction picks the best compaction, if any, for vs' current version.
+// 如何选取compaction的？
 func pickCompaction(vs *versionSet) (c *compaction) {
 	cur := vs.currentVersion()
 
@@ -50,6 +52,7 @@ func pickCompaction(vs *versionSet) (c *compaction) {
 			level:   cur.compactionLevel,
 		}
 		// TODO: Pick the first file that comes after the compaction pointer for c.level.
+		// 从compactionLevel的文件列表中选择第一个文件
 		c.inputs[0] = []fileMetadata{cur.files[c.level][0]}
 
 	} else if false {
@@ -61,14 +64,18 @@ func pickCompaction(vs *versionSet) (c *compaction) {
 
 	// Files in level 0 may overlap each other, so pick up all overlapping ones.
 	if c.level == 0 {
+		// 取到第一个文件的最小、最大内部key
 		smallest, largest := ikeyRange(vs.icmp, c.inputs[0], nil)
+		// func (v *version) overlaps(level int, ucmp db.Comparer, ukey0, ukey1 []byte) (ret []fileMetadata) {}
 		c.inputs[0] = cur.overlaps(0, vs.ucmp, smallest.ukey(), largest.ukey())
 		if len(c.inputs) == 0 {
 			panic("leveldb: empty compaction")
 		}
 	}
 
+	//
 	c.setupOtherInputs(vs)
+	// c.inputs最多有三个元素（三个文件列表）
 	return c
 }
 
@@ -78,15 +85,22 @@ func pickCompaction(vs *versionSet) (c *compaction) {
 // whether the compaction was automatically scheduled or user initiated.
 func (c *compaction) setupOtherInputs(vs *versionSet) {
 	smallest0, largest0 := ikeyRange(vs.icmp, c.inputs[0], nil)
+	// c.level + 1
 	c.inputs[1] = c.version.overlaps(c.level+1, vs.ucmp, smallest0.ukey(), largest0.ukey())
+	/*
+	从c.inputs[0]和c.inputs[1]两个文件列表中得到最大的内部key和最小的内部key，
+	即level和level+1两个level中最大的内部key和最小的内部key
+	*/
 	smallest01, largest01 := ikeyRange(vs.icmp, c.inputs[0], c.inputs[1])
 
 	// Grow the inputs if it doesn't affect the number of level+1 files.
+	// 尝试是否可以对c.level这个层级进行更多的compaction？
 	if c.grow(vs, smallest01, largest01) {
 		smallest01, largest01 = ikeyRange(vs.icmp, c.inputs[0], c.inputs[1])
 	}
 
 	// Compute the set of level+2 files that overlap this compaction.
+	// 如果c.level + 2 没有达到层级的上限(numLevels=7)
 	if c.level+2 < numLevels {
 		c.inputs[2] = c.version.overlaps(c.level+2, vs.ucmp, smallest01.ukey(), largest01.ukey())
 	}
@@ -105,6 +119,8 @@ func (c *compaction) grow(vs *versionSet, sm, la internalKey) bool {
 	if len(grow0) <= len(c.inputs[0]) {
 		return false
 	}
+	// 如果grow0和c.inputs[1]这两个文件列表的所有文件的大小之和大于等于...
+	// 应该是为了避免一个level中文件所占的磁盘空间过大
 	if totalSize(grow0)+totalSize(c.inputs[1]) >= expandedCompactionByteSizeLimit {
 		return false
 	}
@@ -142,10 +158,17 @@ func (c *compaction) isBaseLevelForUkey(userCmp db.Comparer, ukey []byte) bool {
 //
 // d.mu must be held when calling this.
 func (d *DB) maybeScheduleCompaction() {
+	// 如果有另一个goroutine还没完成compaction操作，或者当前db连接已经关闭，则直接返回
 	if d.compacting || d.closed {
 		return
 	}
 	// TODO: check for manual compactions.
+	// 这里再做一次检测
+	// 如果d.imm为nil，但当前版本version达到了compaction的条件，则也要执行compaction，这次compaction是针对磁盘上的db文件的，
+	// 从level0到level1，从level1到level2依次compaction
+
+	// 从这个条件判断可以看出，version是和磁盘db文件的compaction相关的。那么是不是每次磁盘db文件的compaction都会产生一个新的version呢？
+	// imm到level0的compaction又是否会产生一个新的version呢？
 	if d.imm == nil {
 		v := d.versions.currentVersion()
 		// TODO: check v.fileToCompact.
@@ -154,7 +177,9 @@ func (d *DB) maybeScheduleCompaction() {
 			return
 		}
 	}
+	// compacting标识位
 	d.compacting = true
+	// 在新goroutine中执行d.compact()
 	go d.compact()
 }
 
@@ -162,6 +187,7 @@ func (d *DB) maybeScheduleCompaction() {
 func (d *DB) compact() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// 调用d.compact1()开始一次compaction
 	if err := d.compact1(); err != nil {
 		// TODO: count consecutive compaction errors and backoff.
 	}
@@ -169,6 +195,7 @@ func (d *DB) compact() {
 	// The previous compaction may have produced too many files in a
 	// level, so reschedule another compaction if needed.
 	d.maybeScheduleCompaction()
+	// 唤醒其他处于d.compactionCond.Wait()状态的进程/goroutine
 	d.compactionCond.Broadcast()
 }
 
@@ -177,6 +204,8 @@ func (d *DB) compact() {
 // d.mu must be held when calling this, but the mutex may be dropped and
 // re-acquired during the course of this method.
 func (d *DB) compact1() error {
+	// 若d.imm不为nil，则表示当前compaction是需要从d.imm compaction到level0。该compaction完成之后，
+	// 会生成一个新的version，d.imm也会被置为nil
 	if d.imm != nil {
 		return d.compactMemTable()
 	}
@@ -196,20 +225,25 @@ func (d *DB) compact1() error {
 		totalSize(c.inputs[2]) <= maxGrandparentOverlapBytes {
 
 		meta := &c.inputs[0][0]
+		// 直接将文件meta从level移到level+1
+		// 并产生一个新的version
 		return d.versions.logAndApply(d.dirname, &versionEdit{
 			deletedFiles: map[deletedFileEntry]bool{
-				deletedFileEntry{level: c.level, fileNum: meta.fileNum}: true,
-			},
+			deletedFileEntry{level: c.level, fileNum: meta.fileNum}: true,
+		},
 			newFiles: []newFileEntry{
-				{level: c.level + 1, meta: *meta},
-			},
+			{level: c.level+1, meta: *meta},
+		},
 		})
 	}
 
+	// compact磁盘上需要compact的db文件
+	// 并产生一个versionEdit
 	ve, pendingOutputs, err := d.compactDiskTables(c)
 	if err != nil {
 		return err
 	}
+	// 根据ve和d.versions.currentVersion()产生一个新的version，添加到d.versions上
 	err = d.versions.logAndApply(d.dirname, ve)
 	for _, fileNum := range pendingOutputs {
 		delete(d.pendingOutputs, fileNum)
@@ -217,6 +251,7 @@ func (d *DB) compact1() error {
 	if err != nil {
 		return err
 	}
+	// 删除过期的log文件、manifest文件、db文件，并从tableCache中将过期的日志文件删掉
 	d.deleteObsoleteFiles()
 	return nil
 }
@@ -226,21 +261,27 @@ func (d *DB) compact1() error {
 // d.mu must be held when calling this, but the mutex may be dropped and
 // re-acquired during the course of this method.
 func (d *DB) compactMemTable() error {
+	// 将d.imm中的数据写到一个新的level0 db文件中
+	// 返回的meta中，包含新db文件的元信息，包括filenum（文件序号）、largest（最大内部key）、smallest(最小内部key)、size（文件大小）
 	meta, err := d.writeLevel0Table(d.opts.GetFileSystem(), d.imm)
 	if err != nil {
 		return err
 	}
+	// d.versions中最新的一个version与versionEdit来生成一个新的version
 	err = d.versions.logAndApply(d.dirname, &versionEdit{
 		logNumber: d.logNumber,
 		newFiles: []newFileEntry{
-			{level: 0, meta: meta},
-		},
+		{level: 0, meta: meta},
+	},
 	})
+	// 为什么要从d.writeLevel0Table到这里在d.pendingOutputs中存放meta.fileNum?
+	// 什么地方用到了吗？
 	delete(d.pendingOutputs, meta.fileNum)
 	if err != nil {
 		return err
 	}
 	d.imm = nil
+	// 删除过期的log文件、manifest文件、db文件，并从tableCache中将过期的日志文件删掉
 	d.deleteObsoleteFiles()
 	return nil
 }
@@ -268,6 +309,10 @@ func (d *DB) compactDiskTables(c *compaction) (ve *versionEdit, pendingOutputs [
 	d.mu.Unlock()
 	defer d.mu.Lock()
 
+	// 将所有需要compaction的文件都加载到tableCache中（并不是将文件内容加载到tableCache中，只是在tableTable中创建一个和文件相关的节点），
+	// tableCache是一个链表
+	// 返回一个迭代器
+	// 这个compactionIterator函数需要再理解一下！！！
 	iter, err := compactionIterator(&d.tableCache, d.icmp, c)
 	if err != nil {
 		return nil, pendingOutputs, err
@@ -293,6 +338,8 @@ func (d *DB) compactDiskTables(c *compaction) (ve *versionEdit, pendingOutputs [
 
 	currentUkey := make([]byte, 0, 4096)
 	hasCurrentUkey := false
+	// internalKeySeqNumMax is the largest valid sequence number.
+	// const internalKeySeqNumMax = uint64(1<<56 - 1)
 	lastSeqNumForKey := internalKeySeqNumMax
 	smallest, largest := internalKey(nil), internalKey(nil)
 	for iter.Next() {
@@ -322,7 +369,7 @@ func (d *DB) compactDiskTables(c *compaction) (ve *versionEdit, pendingOutputs [
 
 			} else if ikey.kind() == internalKeyKindDelete &&
 				ikeySeqNum <= smallestSnapshot &&
-				c.isBaseLevelForUkey(d.icmp.userCmp, ukey) {
+					c.isBaseLevelForUkey(d.icmp.userCmp, ukey) {
 
 				// For this user key:
 				// (1) there is no data in higher levels
@@ -359,16 +406,18 @@ func (d *DB) compactDiskTables(c *compaction) (ve *versionEdit, pendingOutputs [
 			largest = make(internalKey, 0, 2*len(ikey))
 		}
 		largest = append(largest[:0], ikey...)
+		// 将所有有overlap的db file的内容写到一个新的db file中。
 		if err := tw.Set(ikey, iter.Value(), nil); err != nil {
 			return nil, pendingOutputs, err
 		}
 	}
 
+	// 将新的db file加到c.level + 1
 	ve = &versionEdit{
 		deletedFiles: map[deletedFileEntry]bool{},
 		newFiles: []newFileEntry{
 			{
-				level: c.level + 1,
+				level: c.level+1,
 				meta: fileMetadata{
 					fileNum:  fileNum,
 					size:     1,
@@ -378,10 +427,11 @@ func (d *DB) compactDiskTables(c *compaction) (ve *versionEdit, pendingOutputs [
 			},
 		},
 	}
+	// 然后将各个overlap的db文件从各自的level上标记为删除
 	for i := 0; i < 2; i++ {
 		for _, f := range c.inputs[i] {
 			ve.deletedFiles[deletedFileEntry{
-				level:   c.level + i,
+				level:   c.level+i,
 				fileNum: f.fileNum,
 			}] = true
 		}
@@ -402,6 +452,7 @@ func compactionIterator(tc *tableCache, icmp db.Comparer, c *compaction) (cIter 
 		}
 	}()
 
+	// 若非0 level
 	if c.level != 0 {
 		iter, err := newConcatenatingIterator(tc, c.inputs[0])
 		if err != nil {

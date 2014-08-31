@@ -22,6 +22,7 @@ type versionSet struct {
 
 	// dummyVersion is the head of a circular doubly-linked list of versions.
 	// dummyVersion.prev is the current version.
+	// dummyVersion是双向循环链表的表头，这意味着该链表的最后一个节点即当前最新的版本version
 	dummyVersion version
 
 	logNumber          uint64
@@ -35,6 +36,7 @@ type versionSet struct {
 }
 
 // load loads the version set from the manifest file.
+// 先读取CURRENT文件内容，获取manifest文件名，
 func (vs *versionSet) load(dirname string, opts *db.Options) error {
 	vs.dirname = dirname
 	vs.opts = opts
@@ -56,6 +58,7 @@ func (vs *versionSet) load(dirname string, opts *db.Options) error {
 	if err != nil {
 		return err
 	}
+	// 文件大小
 	n := stat.Size()
 	if n == 0 {
 		return fmt.Errorf("leveldb: CURRENT file for DB %q is empty", dirname)
@@ -64,6 +67,7 @@ func (vs *versionSet) load(dirname string, opts *db.Options) error {
 		return fmt.Errorf("leveldb: CURRENT file for DB %q is too large", dirname)
 	}
 	b := make([]byte, n)
+	// 将文件数据读取到b中
 	_, err = current.ReadAt(b, 0)
 	if err != nil {
 		return err
@@ -71,6 +75,8 @@ func (vs *versionSet) load(dirname string, opts *db.Options) error {
 	if b[n-1] != '\n' {
 		return fmt.Errorf("leveldb: CURRENT file for DB %q is malformed", dirname)
 	}
+	// 去除掉最后的换行符
+	// b即为CURRENT所指向的manifest文件的文件名
 	b = b[:n-1]
 
 	// Read the versionEdits in the manifest file.
@@ -80,8 +86,10 @@ func (vs *versionSet) load(dirname string, opts *db.Options) error {
 		return fmt.Errorf("leveldb: could not open manifest file %q for DB %q: %v", b, dirname, err)
 	}
 	defer manifest.Close()
+	// 生成一个Reader对象
 	rr := record.NewReader(manifest)
 	for {
+		// Next returns a reader for the next record.
 		r, err := rr.Next()
 		if err == io.EOF {
 			break
@@ -90,17 +98,20 @@ func (vs *versionSet) load(dirname string, opts *db.Options) error {
 			return err
 		}
 		var ve versionEdit
+		// 将记录读入ve
 		err = ve.decode(r)
 		if err != nil {
 			return err
 		}
 		if ve.comparatorName != "" {
+			// 读和写的key比较方法必须一致
 			if ve.comparatorName != vs.ucmp.Name() {
-				return fmt.Errorf("leveldb: manifest file %q for DB %q: "+
-					"comparer name from file %q != comparer name from db.Options %q",
+				return fmt.Errorf("leveldb: manifest file %q for DB %q: " +
+							"comparer name from file %q != comparer name from db.Options %q",
 					b, dirname, ve.comparatorName, vs.ucmp.Name())
 			}
 		}
+		// bve.
 		bve.accumulate(&ve)
 		if ve.logNumber != 0 {
 			vs.logNumber = ve.logNumber
@@ -122,10 +133,14 @@ func (vs *versionSet) load(dirname string, opts *db.Options) error {
 			return fmt.Errorf("leveldb: incomplete manifest file %q for DB %q", b, dirname)
 		}
 	}
+	// 生成新版本version之前的准备工作
 	vs.markFileNumUsed(vs.logNumber)
 	vs.markFileNumUsed(vs.prevLogNumber)
 	vs.manifestFileNumber = vs.nextFileNum()
 
+	// 根据bve的added和deleted字段，生成一个新的version(newVersion)
+	// 并根据level0的文件数及更大level的文件所占磁盘空间大小来计算newVersion的compactionScore和compactionLevel
+	// 这个compactionScore和compactionLevel是判断是否需要compaction的条件
 	newVersion, err := bve.apply(nil, vs.icmp)
 	if err != nil {
 		return err
@@ -149,12 +164,19 @@ func (vs *versionSet) logAndApply(dirname string, ve *versionEdit) error {
 	ve.lastSequence = vs.lastSequence
 
 	var bve bulkVersionEdit
+	// 最终得到是ve在每个level各持有多少个文件（不包括已经删掉的文件），并记录在bve.added中
 	bve.accumulate(ve)
+	// 根据vs.currentVersion()和bve来生成一个newVersion
+	/*
+	主要是将最新一个version（即d.versions.currentVersion()）在各个level上持有的文件列表与versionEdit在对应level上持有的文件列表
+	进行汇总形成newVersion的各个level持有的文件列表，并更新newVersion的compactionScore和compactionLevel字段，便于之后判断是否需要compaction
+	*/
 	newVersion, err := bve.apply(vs.currentVersion(), vs.icmp)
 	if err != nil {
 		return err
 	}
 
+	// 如果不存在manifest文件，则创建
 	if vs.manifest == nil {
 		if err := vs.createManifest(dirname); err != nil {
 			return err
@@ -165,6 +187,7 @@ func (vs *versionSet) logAndApply(dirname string, ve *versionEdit) error {
 	if err != nil {
 		return err
 	}
+	// 将ve的信息写入w，即写入manifest文件
 	if err := ve.encode(w); err != nil {
 		return err
 	}
@@ -174,12 +197,14 @@ func (vs *versionSet) logAndApply(dirname string, ve *versionEdit) error {
 	if err := vs.manifestFile.Sync(); err != nil {
 		return err
 	}
+	// 在current文件设置manifest文件
 	if err := setCurrentFile(dirname, vs.opts.GetFileSystem(), vs.manifestFileNumber); err != nil {
 		return err
 	}
 
 	// Install the new version.
 	vs.append(newVersion)
+	// 根据ve的logNumber和prevLogNumber来设置vs中对应的字段
 	if ve.logNumber != 0 {
 		vs.logNumber = ve.logNumber
 	}
@@ -192,7 +217,7 @@ func (vs *versionSet) logAndApply(dirname string, ve *versionEdit) error {
 // createManifest creates a manifest file that contains a snapshot of vs.
 func (vs *versionSet) createManifest(dirname string) (err error) {
 	var (
-		filename     = dbFilename(dirname, fileTypeManifest, vs.manifestFileNumber)
+		filename = dbFilename(dirname, fileTypeManifest, vs.manifestFileNumber)
 		manifestFile db.File
 		manifest     *record.Writer
 	)
@@ -220,9 +245,9 @@ func (vs *versionSet) createManifest(dirname string) (err error) {
 	for level, fileMetadata := range vs.currentVersion().files {
 		for _, meta := range fileMetadata {
 			snapshot.newFiles = append(snapshot.newFiles, newFileEntry{
-				level: level,
-				meta:  meta,
-			})
+					level: level,
+					meta:  meta,
+				})
 		}
 	}
 
@@ -242,7 +267,7 @@ func (vs *versionSet) createManifest(dirname string) (err error) {
 
 func (vs *versionSet) markFileNumUsed(fileNum uint64) {
 	if vs.nextFileNumber <= fileNum {
-		vs.nextFileNumber = fileNum + 1
+		vs.nextFileNumber = fileNum+1
 	}
 }
 
